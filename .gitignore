@@ -1,0 +1,12 @@
+﻿# Confidential data
+.env
+driver_links.json
+data/driver_links.json
+
+# Log files
+*.log
+bot.log
+
+# Python cache
+__pycache__/
+*.pyc
