@@ -3,6 +3,7 @@ from tkinter import ttk, messagebox, filedialog
 import subprocess
 import os
 import psutil
+import sys
 from bot import get_database_instance
 from achievements import get_achievement_instance
 import time
@@ -10,16 +11,27 @@ import time
 def configure_styles():
     """Настройка стилей для виджетов"""
     style = ttk.Style()
-    style.configure("Accent.TButton", foreground="white", background="#d9534f")
+    style.configure("Accent.TButton", foreground="white", background="#5cb85c")  # Зеленый цвет
     style.map("Accent.TButton",
               foreground=[('pressed', 'white'), ('active', 'white')],
-              background=[('pressed', '#c9302c'), ('active', '#c9302c')])
+              background=[('pressed', '#449d44'), ('active', '#449d44')])
+    
+    # Стиль для черных кнопок
+    style.configure("Black.TButton", 
+                  foreground='black',
+                  background='white',
+                  bordercolor='black',
+                  borderwidth=2)
+    style.map("Black.TButton",
+            foreground=[('active', 'black'), ('pressed', 'black')],
+            background=[('active', '#f0f0f0'), ('pressed', '#e0e0f0')])
 
 class UserManagerWindow:
-    def __init__(self, parent, bot_db):
+    def __init__(self, parent, bot_db, bot_manager=None):
         self.parent = parent
         self.bot_db = bot_db
-        
+        self.bot_manager = bot_manager
+            
         self.achievement_system = get_achievement_instance()
         self.last_update_time = 0
         
@@ -89,7 +101,7 @@ class UserManagerWindow:
         close_btn = ttk.Button(
             button_frame,
             text="Закрыть",
-            command=self.window.destroy,
+            command=self.close_window,
             style='Black.TButton'
         )
         close_btn.pack(side="right", padx=5, ipadx=10, ipady=5)
@@ -113,6 +125,13 @@ class UserManagerWindow:
         
         # Загружаем данные
         self.load_users()
+        
+    def close_window(self):
+        """Закрывает окно и восстанавливает главное"""
+        if hasattr(self, 'bot_manager') and self.bot_manager:  # Двойная проверка
+            self.bot_manager.on_child_close(self.window)
+        else:
+            self.window.destroy()
     
     def reload_users(self):
         """Полностью перезагружает данные из базы"""
@@ -253,106 +272,584 @@ class BotManager:
         self.log_file = "bot.log"
         self.bot_db = get_database_instance()
         
+        # Иконка для окон (добавьте файл icon.ico в папку с проектом)
+        try:
+            self.root.iconbitmap('icon.ico')
+        except:
+            pass
+        
         self.setup_ui()
         self.update_status()
+        self.center_window(self.root)
+        
+        # Задержка перед первым обновлением статуса
+        self.root.after(1000, self.update_status)
+    
+    def center_window(self, window):
+        """Центрирует окно на экране с плавной анимацией"""
+        window.update_idletasks()
+        width = window.winfo_width()
+        height = window.winfo_height()
+        screen_width = window.winfo_screenwidth()
+        screen_height = window.winfo_screenheight()
+        
+        # Плавное появление по центру
+        for i in range(0, 101, 10):
+            x = (screen_width - width*i//100) // 2
+            y = (screen_height - height*i//100) // 2
+            window.geometry(f"{width*i//100}x{height*i//100}+{x}+{y}")
+            window.update()
+            time.sleep(0.02)
+        
+        window.geometry(f"{width}x{height}+{(screen_width - width) // 2}+{(screen_height - height) // 2}")
     
     def setup_ui(self):
-        self.root.title("Управление Telegram ботом")
-        self.root.geometry("400x200")
+        """Настройка пользовательского интерфейса с улучшенным дизайном"""
+        self.root.title("TaxiBot Manager")
+        self.root.geometry("600x350")
+        self.root.resizable(False, False)
         
+        # Стили для виджетов
         style = ttk.Style()
-        style.configure('TButton', font=('Arial', 10))
-        style.configure('TLabel', font=('Arial', 10))
+        style.configure('TFrame', background='#f0f0f0')
+        style.configure('TLabel', background='#f0f0f0', font=('Arial', 10))
+        style.configure('TButton', font=('Arial', 10, 'bold'), padding=5)  # Добавлен жирный шрифт
         
-        self.status_frame = ttk.LabelFrame(self.root, text="Статус бота")
-        self.status_frame.pack(pady=10, padx=10, fill="x")
+        # Главный фрейм
+        main_frame = ttk.Frame(self.root)
+        main_frame.pack(fill='both', expand=True, padx=10, pady=10)
         
-        self.status_label = ttk.Label(self.status_frame, text="Проверка...")
-        self.status_label.pack(pady=5)
+        # Фрейм статуса с иконкой
+        self.status_frame = ttk.LabelFrame(main_frame, text=" Статус бота ", padding=10)
+        self.status_frame.pack(fill='x', pady=(0, 15))
         
-        self.control_frame = ttk.Frame(self.root)
-        self.control_frame.pack(pady=10)
+        status_content = ttk.Frame(self.status_frame)
+        status_content.pack(fill='x')
         
-        self.start_btn = ttk.Button(self.control_frame, text="Запустить", command=self.start_bot)
-        self.start_btn.pack(side="left", padx=5)
+        # Иконка статуса
+        self.status_icon = ttk.Label(status_content, text="", font=('Arial', 14))
+        self.status_icon.pack(side='left', padx=(0, 10))
         
-        self.stop_btn = ttk.Button(self.control_frame, text="Остановить", command=self.stop_bot)
-        self.stop_btn.pack(side="left", padx=5)
+        # Текст статуса
+        self.status_label = ttk.Label(status_content, text="Проверка состояния...", font=('Arial', 10))
+        self.status_label.pack(side='left')
         
-        self.users_btn = ttk.Button(self.control_frame, text="Пользователи", command=self.show_users_window)
-        self.users_btn.pack(side="left", padx=5)
+        # Фрейм с кнопками управления
+        control_frame = ttk.Frame(main_frame)
+        control_frame.pack(fill='x', pady=5)
         
-        self.log_btn = ttk.Button(self.control_frame, text="Логи", command=self.open_logs)
-        self.log_btn.pack(side="left", padx=5)
+        # Создаем кнопки как атрибуты класса
+        self.start_btn = tk.Button(
+            control_frame,
+            text="Запустить бота",
+            command=self.start_bot,
+            bg="#5cb85c",
+            fg='white',
+            activebackground="#449d44",
+            activeforeground='white',
+            relief='flat',
+            font=('Arial', 10, 'bold'),  # Жирный шрифт
+            padx=10,
+            pady=8,
+            bd=0
+        )
+        self.start_btn.grid(row=0, column=0, padx=5, pady=5, sticky='nsew')
         
-        self.exit_btn = ttk.Button(self.root, text="Выход", command=self.on_close)
-        self.exit_btn.pack(pady=10)
+        self.stop_btn = tk.Button(
+            control_frame,
+            text="Остановить бот",
+            command=self.stop_bot,
+            bg="#d9534f",
+            fg='white',  # Белый текст
+            activebackground="#c9302c",
+            activeforeground='white',  # Белый текст при нажатии
+            relief='flat',
+            font=('Arial', 10, 'bold'),  # Жирный шрифт
+            padx=10,
+            pady=8,
+            bd=0
+        )
+        self.stop_btn.grid(row=0, column=1, padx=5, pady=5, sticky='nsew')
+        
+        users_btn = tk.Button(
+            control_frame,
+            text="Управление пользователями",
+            command=self.show_users_window,
+            bg="#337ab7",
+            fg='white',
+            activebackground="#286090",
+            activeforeground='white',
+            relief='flat',
+            font=('Arial', 10, 'bold'),  # Жирный шрифт
+            padx=10,
+            pady=8,
+            bd=0
+        )
+        users_btn.grid(row=1, column=0, padx=5, pady=5, sticky='nsew')
+        
+        settings_btn = tk.Button(
+            control_frame,
+            text="Настройки системы",
+            command=self.show_settings,
+            bg="#5bc0de",
+            fg='white',
+            activebackground="#46b8da",
+            activeforeground='white',
+            relief='flat',
+            font=('Arial', 10, 'bold'),  # Жирный шрифт
+            padx=10,
+            pady=8,
+            bd=0
+        )
+        settings_btn.grid(row=1, column=1, padx=5, pady=5, sticky='nsew')
+        
+        # Настройка веса колонок
+        control_frame.grid_columnconfigure(0, weight=1)
+        control_frame.grid_columnconfigure(1, weight=1)
+        
+        # Нижняя панель
+        bottom_frame = ttk.Frame(main_frame)
+        bottom_frame.pack(fill='x', pady=(10, 0))
+        
+        # Кнопка выхода
+        self.exit_btn = ttk.Button(
+            bottom_frame,
+            text="Выход",
+            command=self.on_close,
+            style='Black.TButton'
+        )
+        self.exit_btn.pack(side='right', padx=5)
+        
+        # Информация о версии
+        version_label = ttk.Label(
+            bottom_frame,
+            text="TaxiBot Manager v1.0",
+            foreground='gray'
+        )
+        version_label.pack(side='left')
         
         self.update_buttons()
     
+    def show_settings(self):
+        """Улучшенное окно настроек с валидацией"""
+        self.root.withdraw()
+        
+        settings_win = tk.Toplevel(self.root)
+        settings_win.title("Настройки системы")
+        settings_win.geometry("600x400")
+        settings_win.resizable(False, False)
+        
+        try:
+            settings_win.iconbitmap('icon.ico')
+        except:
+            pass
+        
+        self.center_window(settings_win)
+        settings_win.protocol("WM_DELETE_WINDOW", lambda: self.on_child_close(settings_win))
+        
+        # Notebook с вкладками
+        notebook = ttk.Notebook(settings_win)
+        notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Вкладка основных настроек
+        main_frame = ttk.Frame(notebook)
+        notebook.add(main_frame, text="Основные")
+        
+        # Путь к Excel
+        excel_frame = ttk.LabelFrame(main_frame, text=" Настройки Excel ", padding=10)
+        excel_frame.pack(fill='x', pady=5)
+        
+        ttk.Label(excel_frame, text="Путь к файлу данных:").pack(anchor='w')
+        
+        excel_row = ttk.Frame(excel_frame)
+        excel_row.pack(fill='x', pady=5)
+        
+        self.excel_path_var = tk.StringVar(value=os.getenv("EXCEL_PATH", ""))
+        excel_entry = ttk.Entry(
+            excel_row,
+            textvariable=self.excel_path_var,
+            width=50,
+            font=('Arial', 9)
+        )
+        excel_entry.pack(side='left', fill='x', expand=True, padx=(0, 5))
+        
+        browse_btn = ttk.Button(
+            excel_row,
+            text="Обзор...",
+            command=lambda: self.browse_excel_file(excel_entry),
+            style='Black.TButton'
+        )
+        browse_btn.pack(side='right')
+        
+        # Токен бота
+        token_frame = ttk.LabelFrame(main_frame, text=" Настройки бота ", padding=10)
+        token_frame.pack(fill='x', pady=5)
+        
+        ttk.Label(token_frame, text="Токен Telegram бота:").pack(anchor='w')
+        
+        self.token_var = tk.StringVar(value=os.getenv("TELEGRAM_BOT_TOKEN", ""))
+        token_entry = ttk.Entry(
+            token_frame,
+            textvariable=self.token_var,
+            width=50,
+            font=('Arial', 9),
+            show="*"  # Скрываем ввод токена
+        )
+        token_entry.pack(fill='x', pady=5)
+        
+        # Чекбокс для показа/скрытия токена
+        show_token = tk.IntVar()
+        ttk.Checkbutton(
+            token_frame,
+            text="Показать токен",
+            variable=show_token,
+            command=lambda: token_entry.config(show="" if show_token.get() else "*")
+        ).pack(anchor='w')
+        
+        # Вкладка логов
+        log_frame = ttk.Frame(notebook)
+        notebook.add(log_frame, text="Логи и диагностика")
+        
+        log_content = ttk.Frame(log_frame)
+        log_content.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Кнопка просмотра логов
+        log_btn = ttk.Button(
+            log_content,
+            text="Открыть файл логов",
+            command=self.open_logs,
+            style='Black.TButton'
+        )
+        log_btn.pack(pady=10)
+        
+        # Информация о системе
+        sys_info = ttk.LabelFrame(log_content, text=" Информация о системе ", padding=10)
+        sys_info.pack(fill='x', pady=10)
+        
+        # Добавляем системную информацию
+        info_labels = [
+            f"ОС: {os.name}",
+            f"Python: {sys.version.split()[0]}",
+            f"Путь к боту: {os.path.abspath(self.bot_script)}",
+            f"Размер лог-файла: {self.get_log_size()}"
+        ]
+        
+        for text in info_labels:
+            ttk.Label(sys_info, text=text).pack(anchor='w', pady=2)
+        
+        # Кнопки сохранения/отмены
+        btn_frame = ttk.Frame(settings_win)
+        btn_frame.pack(fill='x', pady=10, padx=10)
+        
+        save_btn = tk.Button(
+            btn_frame,
+            text="Сохранить настройки",
+            command=lambda: self.save_settings(settings_win),
+            bg="#5cb85c",  # Зеленый фон
+            fg='black',    # Черный текст
+            activebackground="#449d44",
+            activeforeground='black',
+            relief='flat',
+            font=('Arial', 10, 'bold'),
+            padx=10,
+            pady=5,
+            bd=0
+        )
+        save_btn.pack(side='left', expand=True, padx=5)
+        
+        cancel_btn = tk.Button(
+            btn_frame,
+            text="Отмена",
+            command=lambda: self.on_child_close(settings_win),
+            bg="#cccccc",  # Серый фон
+            fg='black',    # Черный текст
+            activebackground="#aaaaaa",  # Темнее серый при нажатии
+            activeforeground='black',
+            relief='flat',
+            font=('Arial', 10, 'bold'),
+            padx=10,
+            pady=5,
+            bd=0
+        )
+        cancel_btn.pack(side='right', expand=True, padx=5)
+    
+    def get_log_size(self):
+        """Возвращает размер лог-файла в удобочитаемом формате"""
+        if os.path.exists(self.log_file):
+            size = os.path.getsize(self.log_file)
+            for unit in ['B', 'KB', 'MB', 'GB']:
+                if size < 1024:
+                    return f"{size:.2f} {unit}"
+                size /= 1024
+        return "Файл не найден"
+    
+    def save_settings(self, window):
+        """Улучшенное сохранение настроек с проверками"""
+        excel_path = self.excel_path_var.get().strip()
+        bot_token = self.token_var.get().strip()
+        
+        # Валидация данных
+        errors = []
+        if not excel_path:
+            errors.append("Не указан путь к Excel файлу")
+        elif not os.path.exists(excel_path):
+            errors.append("Указанный Excel файл не существует")
+        
+        if not bot_token:
+            errors.append("Не указан токен бота")
+        elif not bot_token.startswith('') or len(bot_token) < 30:  # Простая проверка формата токена
+            errors.append("Токен бота выглядит некорректно")
+        
+        if errors:
+            messagebox.showerror(
+                "Ошибка в настройках",
+                "Обнаружены следующие ошибки:\n\n- " + "\n- ".join(errors)
+            )
+            return
+        
+        try:
+            # Обновляем путь в боте
+            self.bot_db.update_excel_path(excel_path)
+            
+            # Читаем текущий .env файл
+            env_lines = []
+            if os.path.exists('.env'):
+                with open('.env', 'r', encoding='utf-8') as f:
+                    env_lines = f.readlines()
+            
+            # Обновляем параметры
+            new_lines = []
+            updated_excel = updated_token = False
+            
+            for line in env_lines:
+                if line.startswith('EXCEL_PATH='):
+                    new_lines.append(f'EXCEL_PATH={excel_path}\n')
+                    updated_excel = True
+                elif line.startswith('TELEGRAM_BOT_TOKEN='):
+                    new_lines.append(f'TELEGRAM_BOT_TOKEN={bot_token}\n')
+                    updated_token = True
+                else:
+                    new_lines.append(line)
+            
+            if not updated_excel:
+                new_lines.append(f'EXCEL_PATH={excel_path}\n')
+            if not updated_token:
+                new_lines.append(f'TELEGRAM_BOT_TOKEN={bot_token}\n')
+            
+            # Создаем резервную копию старого файла
+            if os.path.exists('.env'):
+                os.rename('.env', '.env.bak')
+            
+            # Записываем новый файл
+            with open('.env', 'w', encoding='utf-8') as f:
+                f.writelines(new_lines)
+            
+            # Показываем уведомление с иконкой
+            self.show_notification(
+                "Настройки сохранены",
+                "Изменения вступят в силу после перезапуска бота",
+                'info'
+            )
+            self.on_child_close(window)
+            
+        except Exception as e:
+            # Восстанавливаем backup при ошибке
+            if os.path.exists('.env.bak'):
+                os.rename('.env.bak', '.env')
+            
+            messagebox.showerror(
+                "Ошибка сохранения",
+                f"Не удалось сохранить настройки:\n\n{str(e)}"
+            )
+    
+    def show_notification(self, title, message, type_='info'):
+        """Показывает стилизованное уведомление"""
+        if type_ == 'info':
+            messagebox.showinfo(title, message)
+        elif type_ == 'warning':
+            messagebox.showwarning(title, message)
+        elif type_ == 'error':
+            messagebox.showerror(title, message)
+    
+    def browse_excel_file(self, entry_widget):
+        """Улучшенный диалог выбора файла"""
+        filepath = filedialog.askopenfilename(
+            title="Выберите файл данных",
+            filetypes=[
+                ("Excel files", "*.xlsx *.xls"),
+                ("All files", "*.*")
+            ],
+            initialdir=os.path.dirname(self.excel_path_var.get()) if self.excel_path_var.get() else os.getcwd()
+        )
+        if filepath:
+            self.excel_path_var.set(filepath)
+    
     def show_users_window(self):
-        UserManagerWindow(self.root, self.bot_db)
+        """Открывает окно управления пользователями"""
+        self.root.withdraw()
+        
+        user_window = UserManagerWindow(self.root, self.bot_db, self)
+        self.center_window(user_window.window)
+        
+        user_window.window.protocol(
+            "WM_DELETE_WINDOW",
+            lambda: self.on_child_close(user_window.window)
+        )
+    
+    def on_child_close(self, child_window):
+        """Обработчик закрытия дочерних окон с анимацией"""
+        try:
+            # Плавное исчезновение окна
+            for i in range(100, 0, -10):
+                if not child_window.winfo_exists():  # Проверяем, существует ли еще окно
+                    break
+                child_window.attributes('-alpha', i/100)
+                child_window.update()
+                time.sleep(0.02)
+        except tk.TclError:
+            pass  # Окно уже было уничтожено
+        
+        if child_window.winfo_exists():
+            child_window.destroy()
+        
+        self.root.deiconify()
+        self.center_window(self.root)
+        self.root.attributes('-alpha', 1.0)
     
     def is_bot_running(self):
+        """Проверяет, работает ли бот"""
         if self.bot_process is None:
             return False
         return self.bot_process.poll() is None
-        
+    
     def start_bot(self):
+        """Запускает бота с улучшенным интерфейсом"""
         if not self.is_bot_running():
             try:
-                self.bot_process = subprocess.Popen(["python", self.bot_script])
-                messagebox.showinfo("Успех", "Бот успешно запущен")
+                # Показываем индикатор загрузки
+                self.status_label.config(text="Запуск бота...")
+                self.status_icon.config(text="⏳")
+                self.root.update()
+                
+                self.bot_process = subprocess.Popen(
+                    ["python", self.bot_script],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                
+                # Даем время на инициализацию
+                self.root.after(1000, lambda: self.show_notification(
+                    "Бот запущен",
+                    "Telegram бот успешно запущен",
+                    'info'
+                ))
+                
             except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось запустить бот: {str(e)}")
+                self.show_notification(
+                    "Ошибка запуска",
+                    f"Не удалось запустить бота:\n\n{str(e)}",
+                    'error'
+                )
         else:
-            messagebox.showwarning("Внимание", "Бот уже запущен")
+            self.show_notification(
+                "Бот уже работает",
+                "Telegram бот уже запущен",
+                'warning'
+            )
         
         self.update_status()
-        
+    
     def stop_bot(self):
+        """Останавливает бота с подтверждением"""
         if self.is_bot_running():
-            try:
-                for proc in psutil.process_iter():
-                    if proc.name() == "python.exe" and self.bot_script in " ".join(proc.cmdline()):
-                        proc.terminate()
-                self.bot_process = None
-                messagebox.showinfo("Успех", "Бот успешно остановлен")
-            except Exception as e:
-                messagebox.showerror("Ошибка", f"Не удалось остановить бот: {str(e)}")
+            if messagebox.askyesno(
+                "Подтверждение",
+                "Вы уверены, что хотите остановить бота?",
+                icon='warning'
+            ):
+                try:
+                    # Показываем индикатор
+                    self.status_label.config(text="Остановка бота...")
+                    self.status_icon.config(text="⏳")
+                    self.root.update()
+                    
+                    for proc in psutil.process_iter():
+                        if proc.name() == "python.exe" and self.bot_script in " ".join(proc.cmdline()):
+                            proc.terminate()
+                    
+                    self.bot_process = None
+                    self.show_notification(
+                        "Бот остановлен",
+                        "Telegram бот успешно остановлен",
+                        'info'
+                    )
+                    
+                except Exception as e:
+                    self.show_notification(
+                        "Ошибка остановки",
+                        f"Не удалось остановить бота:\n\n{str(e)}",
+                        'error'
+                    )
         else:
-            messagebox.showwarning("Внимание", "Бот не запущен")
+            self.show_notification(
+                "Бот не запущен",
+                "Telegram бот в настоящее время не работает",
+                'warning'
+            )
         
         self.update_status()
-        
+    
     def open_logs(self):
+        """Открывает файл логов с проверкой"""
         if os.path.exists(self.log_file):
             try:
-                os.startfile(self.log_file)
-            except:
-                filedialog.askopenfilename(initialfile=self.log_file)
+                if os.name == 'nt':  # Windows
+                    os.startfile(self.log_file)
+                else:  # MacOS, Linux
+                    subprocess.run(['xdg-open', self.log_file])
+            except Exception as e:
+                self.show_notification(
+                    "Ошибка открытия",
+                    f"Не удалось открыть файл логов:\n\n{str(e)}",
+                    'error'
+                )
         else:
-            messagebox.showwarning("Внимание", "Лог-файл не найден")
-        
+            self.show_notification(
+                "Файл не найден",
+                "Лог-файл не найден. Возможно, бот еще не запускался.",
+                'warning'
+            )
+    
     def update_status(self):
+        """Обновляет статус с иконками"""
         if self.is_bot_running():
             self.status_label.config(text="Статус: Работает", foreground="green")
+            self.status_icon.config(text="🟢")
         else:
             self.status_label.config(text="Статус: Остановлен", foreground="red")
+            self.status_icon.config(text="🔴")
         
         self.update_buttons()
         self.root.after(2000, self.update_status)
-        
+    
     def update_buttons(self):
+        """Обновляет состояние кнопок"""
         running = self.is_bot_running()
-        self.start_btn.state(["!disabled" if not running else "disabled"])
-        self.stop_btn.state(["!disabled" if running else "disabled"])
-        
+        self.start_btn.config(state='disabled' if running else 'normal')
+        self.stop_btn.config(state='normal' if running else 'disabled')
+    
     def on_close(self):
+        """Обработчик закрытия главного окна"""
         if self.is_bot_running():
-            if messagebox.askyesno("Подтверждение", "Бот все еще работает. Завершить его?"):
+            if messagebox.askyesno(
+                "Подтверждение",
+                "Бот все еще работает. Вы уверены, что хотите выйти?",
+                icon='warning'
+            ):
                 self.stop_bot()
-        self.root.destroy()
+                self.root.destroy()
+        else:
+            self.root.destroy()
 
 if __name__ == "__main__":
     root = tk.Tk()
