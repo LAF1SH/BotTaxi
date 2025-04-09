@@ -33,10 +33,7 @@ async def remove_keyboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         context.user_data['keyboard_active'] = False
 
-env_path = Path(__file__).parent / '.env'
-load_dotenv(dotenv_path=env_path)
-
-# Настройка логирования
+# Настройка логирования (должна быть в самом начале)
 log_handler = RotatingFileHandler('bot.log', maxBytes=1024*1024, backupCount=3)
 log_handler.setFormatter(logging.Formatter(
     '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -45,11 +42,26 @@ logger = logging.getLogger(__name__)
 logger.addHandler(log_handler)
 logger.setLevel(logging.INFO)
 
-# Конфигурация
+# Загрузка .env файла
+env_path = Path(__file__).parent / '.env'
+if not env_path.exists():
+    logger.error(f"Файл .env не найден по пути: {env_path}")
+    raise FileNotFoundError(f"Файл .env не найден по пути: {env_path}")
+
+try:
+    # Просто передаем путь к файлу
+    load_dotenv(env_path)
+    logger.info(".env файл успешно загружен")
+except Exception as e:
+    logger.error(f"Ошибка загрузки .env файла: {str(e)}")
+    raise
+
+# Получение переменных окружения
 EXCEL_PATH = os.getenv("EXCEL_PATH")
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
 if not TOKEN or not EXCEL_PATH:
+    logger.error("Не заданы TOKEN или EXCEL_PATH в .env файле!")
     raise ValueError("Не заданы TOKEN или EXCEL_PATH в .env файле!")
 
 class DriverDatabase:
@@ -248,6 +260,13 @@ class DriverDatabase:
         if top.empty:
             return False
         return license_number in top['Вод. Удоств.'].values
+    
+    def update_excel_path(self, new_path):
+        """Обновляет путь к Excel файлу"""
+        global EXCEL_PATH
+        EXCEL_PATH = new_path
+        self.last_modified = 0  # Сбрасываем время модификации для принудительной перезагрузки
+        self.load_data()  # Перезагружаем данные
 
 db = DriverDatabase()
 
